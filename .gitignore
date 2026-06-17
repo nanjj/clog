@@ -30,3 +30,24 @@
 *.exe
 *.out
 *.app
+
+# Go
+/clog          # project binary
+/clog.exe
+*.test
+*.test.exe
+/vendor/       # vendored dependencies (check in only if needed)
+go.work
+go.work.sum
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.dscli/
+!go.mod
+!go.sum
