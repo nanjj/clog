@@ -122,24 +122,31 @@ func TestTracer_MultipleSpans(t *testing.T) {
 }
 
 func TestTracer_InitDefaults(t *testing.T) {
-	// Verify init() sets expected defaults when env is not set
-	// Clear known env vars
-	for _, env := range []string{
-		"JAEGER_SAMPLER_TYPE",
-		"JAEGER_SAMPLER_PARAM",
-		"JAEGER_REPORTER_MAX_QUEUE_SIZE",
-		"JAEGER_REPORTER_FLUSH_INTERVAL",
-	} {
-		os.Unsetenv(env)
-	}
-	// Re-trigger init by re-initializing (not possible directly),
-	// but we can verify defaults are set by creating a tracer
-	t.Setenv("JAEGER_SERVICE_NAME", "init-defaults-test")
-	tr, err := clog.NewTracer("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tr.Close()
+	// init() sets defaults at package load time. Verify they are in effect.
+	t.Run("env defaults", func(t *testing.T) {
+		// If another test cleared these, skip env verification.
+		checks := map[string]string{
+			"JAEGER_SAMPLER_TYPE":            "const",
+			"JAEGER_SAMPLER_PARAM":           "1",
+			"JAEGER_REPORTER_MAX_QUEUE_SIZE": "64",
+			"JAEGER_REPORTER_FLUSH_INTERVAL": "10s",
+			"JAEGER_TRACEID_128BIT":          "true",
+		}
+		for env, want := range checks {
+			if got := os.Getenv(env); got != "" && got != want {
+				t.Errorf("%s = %q, want %q or empty", env, got, want)
+			}
+		}
+	})
+
+	t.Run("tracer creation works", func(t *testing.T) {
+		t.Setenv("JAEGER_SERVICE_NAME", "init-defaults-test")
+		tr, err := clog.NewTracer("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr.Close()
+	})
 }
 
 func TestTracer_CloseIdempotent(t *testing.T) {
@@ -169,4 +176,55 @@ func TestTracer_ContextWithSpan(t *testing.T) {
 		t.Fatal("expected span in context")
 	}
 	parent.Finish()
+}
+
+func TestNewTracerWithOptions(t *testing.T) {
+
+	t.Run("default (128-bit)", func(t *testing.T) {
+		tr, err := clog.NewTracerWithOptions("options-128bit")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tr.Close()
+		sp := tr.StartSpan("test-span")
+		sp.Finish()
+	})
+
+	t.Run("with 64-bit trace IDs", func(t *testing.T) {
+		tr, err := clog.NewTracerWithOptions("options-64bit",
+			clog.With128Bit(false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tr.Close()
+		sp := tr.StartSpan("test-span")
+		sp.Finish()
+	})
+}
+
+func TestCloseTracer(t *testing.T) {
+	t.Run("nil is safe", func(t *testing.T) {
+		if err := clog.CloseTracer(nil); err != nil {
+			t.Errorf("CloseTracer(nil) = %v, want nil", err)
+		}
+	})
+
+	t.Run("closes tracer", func(t *testing.T) {
+		tr, err := clog.NewTracer("close-tracer-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := clog.CloseTracer(tr); err != nil {
+			t.Errorf("CloseTracer(tr) = %v, want nil", err)
+		}
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		tr, err := clog.NewTracer("close-idempotent-pkg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		clog.CloseTracer(tr)
+		clog.CloseTracer(tr) // second should not panic
+	})
 }

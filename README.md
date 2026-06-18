@@ -39,20 +39,21 @@ span.LogFields(
 
 ## Environment Variables
 
-`clog` reads standard Jaeger environment variables via `config.FromEnv()`. Values set before `NewTracer` is called take priority over the built-in defaults.
+`clog` reads standard Jaeger environment variables via `config.FromEnv()`. Values set before importing clog take priority over the built-in defaults.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JAEGER_SERVICE_NAME` | (set via `NewTracer(name)`) | Service name shown in traces |
-| `JAEGER_SAMPLER_TYPE` | `const` | Sampler type (`const`, `probabilistic`, `ratelimiting`, `remote`) |
-| `JAEGER_SAMPLER_PARAM` | `1` | Sampler parameter (e.g. `1` = sample all) |
-| `JAEGER_REPORTER_MAX_QUEUE_SIZE` | `64` | Max spans in the send queue |
-| `JAEGER_REPORTER_FLUSH_INTERVAL` | `10s` | How often to flush spans to the agent |
-| `JAEGER_AGENT_HOST` | `localhost` | Jaeger agent UDP host |
-| `JAEGER_AGENT_PORT` | `6831` | Jaeger agent UDP port |
-| `JAEGER_REPORTER_LOG_SPANS` | (not set) | Log reporter activity when set to `true` |
-| `JAEGER_DISABLED` | (not set) | Disable tracing when set to `true` |
-| `JAEGER_TAGS` | (not set) | Comma-separated `key=value` tags applied to all spans |
+|Variable                        |Default                    |Description                                                      |
+|--------------------------------|---------------------------|-----------------------------------------------------------------|
+|`JAEGER_SERVICE_NAME`           |(set via `NewTracer(name)`)|Service name shown in traces                                     |
+|`JAEGER_SAMPLER_TYPE`           |`const`                    |Sampler type (`const`, `probabilistic`, `ratelimiting`, `remote`)|
+|`JAEGER_SAMPLER_PARAM`          |`1`                        |Sampler parameter (e.g. `1` = sample all)                        |
+|`JAEGER_REPORTER_MAX_QUEUE_SIZE`|`64`                       |Max spans in the send queue                                      |
+|`JAEGER_REPORTER_FLUSH_INTERVAL`|`10s`                      |How often to flush spans to the agent                            |
+|`JAEGER_TRACEID_128BIT`         |`true`                     |128-bit trace IDs (W3C Trace Context standard)                   |
+|`JAEGER_AGENT_HOST`             |`localhost`                |Jaeger agent UDP host                                            |
+|`JAEGER_AGENT_PORT`             |`6831`                     |Jaeger agent UDP port                                            |
+|`JAEGER_REPORTER_LOG_SPANS`     |(not set)                  |Log reporter activity when set to `true`                         |
+|`JAEGER_DISABLED`               |(not set)                  |Disable tracing when set to `true`                               |
+|`JAEGER_TAGS`                   |(not set)                  |Comma-separated `key=value` tags applied to all spans            |
 
 ### Customising the agent endpoint
 
@@ -78,6 +79,28 @@ tracer, err := clog.NewTracer("my-service",
 
 Creates a new Jaeger tracer. The `name` is used as the `JAEGER_SERVICE_NAME`. Additional `config.Option` values (e.g., `config.Tag(...)`) can be passed to customise the tracer further.
 
+### `clog.NewTracerWithOptions(name string, opts ...Option) (*Tracer, error)`
+
+Creates a new Jaeger tracer with programmatic option overrides. Options are applied before reading environment variables, so they take precedence over env vars.
+
+```go
+tracer, err := clog.NewTracerWithOptions("my-service",
+    clog.With128Bit(true),
+)
+```
+
+### `clog.With128Bit(enabled bool) Option`
+
+Enables or disables 128-bit trace IDs. Enabled by default via `init()` — pass `With128Bit(false)` to use legacy 64-bit trace IDs.
+
+### `clog.CloseTracer(tracer *Tracer) error`
+
+Closes a tracer, flushing any pending spans. Safe to call with `nil`.
+
+```go
+defer clog.CloseTracer(tracer)
+```
+
 ### `clog.SetGlobalTracer(tracer *Tracer)`
 
 Registers the tracer as the OpenTracing global tracer. Required before calling `StartSpanFromContext` without a parent span in context.
@@ -92,11 +115,15 @@ Starts a new span. If `ctx` already contains a parent span, the new span becomes
 
 ## Important Notes
 
-1. **UDP packet limits**: Jaeger's agent accepts spans over UDP. If you log many events in a single span, the combined payload may exceed the ~65 KB UDP packet limit. Use `JAEGER_REPORTER_MAX_QUEUE_SIZE` and `JAEGER_REPORTER_FLUSH_INTERVAL` to tune batching.
+1. **128-bit trace IDs**: clog enables 128-bit trace IDs by default (`JAEGER_TRACEID_128BIT=true`). This aligns with the W3C Trace Context and OpenTelemetry standards. To use legacy 64-bit trace IDs, set `JAEGER_TRACEID_128BIT=false` before importing clog, or pass `clog.With128Bit(false)` to `NewTracerWithOptions`.
 
-2. **Always close**:  `defer tracer.Close()` in `main` and `defer span.Finish()` in each traced operation are required. Without them, buffered spans may never reach the backend.
+2. **UDP packet limits**: Jaeger's agent accepts spans over UDP. If you log many events in a single span, the combined payload may exceed the ~65 KB UDP packet limit. Use `JAEGER_REPORTER_MAX_QUEUE_SIZE` and `JAEGER_REPORTER_FLUSH_INTERVAL` to tune batching.
 
-3. **Child span lifecycle**: A child span must be finished **before** its parent. The parent span only sends its logs and timing after `Finish()` is called.
+3. **Always close**: `defer tracer.Close()` in `main` and `defer span.Finish()` in each traced operation are required. Without them, buffered spans may never reach the backend. `clog.CloseTracer(tracer)` is a nil-safe convenience wrapper.
+
+4. **Child span lifecycle**: A child span must be finished **before** its parent. The parent span only sends its logs and timing after `Finish()` is called.
+
+5. **init() side effects**: Importing clog sets Jaeger environment variable defaults (see table above). These are only applied when the corresponding env var is unset, so explicit env vars always win.
 
 ## Example: Full flow
 
