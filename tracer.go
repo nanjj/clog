@@ -13,14 +13,14 @@
 //	defer span.Finish()
 //	span.LogKV("event", "work-done", "count", 42)
 //
-// Default environment variables (set by init):
+// Environment variables optionally set by init (only when unset):
 //
-//	JAEGER_SAMPLER_TYPE           const
-//	JAEGER_SAMPLER_PARAM          1
-//	JAEGER_REPORTER_MAX_QUEUE_SIZE 64
-//	JAEGER_REPORTER_FLUSH_INTERVAL 10s
-//	JAEGER_TRACEID_128BIT         true
+//	JAEGER_SAMPLER_TYPE    const
+//	JAEGER_SAMPLER_PARAM   1
+//	JAEGER_TRACEID_128BIT  true
 //
+// Reporter env vars MaxQueueSize and FlushInterval are NOT set by init;
+// the Jaeger client's built-in defaults (100, 1s) are used instead.
 // Set any of these before importing clog to override the default.
 // Use NewTracerWithOptions for programmatic control.
 package clog
@@ -35,27 +35,23 @@ import (
 
 // Default environment variable keys set by init.
 const (
-	envJaegerSamplerType           = "JAEGER_SAMPLER_TYPE"
-	envJaegerSamplerParam          = "JAEGER_SAMPLER_PARAM"
-	envJaegerReporterMaxQueueSize  = "JAEGER_REPORTER_MAX_QUEUE_SIZE"
-	envJaegerReporterFlushInterval = "JAEGER_REPORTER_FLUSH_INTERVAL"
-	envJaeger128Bit                = "JAEGER_TRACEID_128BIT"
+	envJaegerSamplerType  = "JAEGER_SAMPLER_TYPE"
+	envJaegerSamplerParam = "JAEGER_SAMPLER_PARAM"
+	envJaeger128Bit       = "JAEGER_TRACEID_128BIT"
 )
 
 // init sets sensible Jaeger defaults. Variables already set in the
 // environment are left untouched.
+//
+// Reporter defaults (MaxQueueSize=100, FlushInterval=1s) are NOT set here
+// because the Jaeger client already provides well-tuned built-in values.
+// Overriding them would risk queue overflow and span loss.
 func init() {
 	if os.Getenv(envJaegerSamplerType) == "" {
 		os.Setenv(envJaegerSamplerType, "const")
 	}
 	if os.Getenv(envJaegerSamplerParam) == "" {
 		os.Setenv(envJaegerSamplerParam, "1")
-	}
-	if os.Getenv(envJaegerReporterMaxQueueSize) == "" {
-		os.Setenv(envJaegerReporterMaxQueueSize, "64")
-	}
-	if os.Getenv(envJaegerReporterFlushInterval) == "" {
-		os.Setenv(envJaegerReporterFlushInterval, "10s")
 	}
 	// 128-bit trace IDs are the modern standard (W3C Trace Context,
 	// OpenTelemetry). Only override when unset so users can opt out
@@ -64,6 +60,7 @@ func init() {
 		os.Setenv(envJaeger128Bit, "true")
 	}
 }
+
 
 // Tracer wraps an OpenTracing tracer with its io.Closer.
 // Call Close to flush pending spans before the process exits.

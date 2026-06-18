@@ -126,11 +126,11 @@ func TestTracer_InitDefaults(t *testing.T) {
 	t.Run("env defaults", func(t *testing.T) {
 		// If another test cleared these, skip env verification.
 		checks := map[string]string{
-			"JAEGER_SAMPLER_TYPE":            "const",
-			"JAEGER_SAMPLER_PARAM":           "1",
-			"JAEGER_REPORTER_MAX_QUEUE_SIZE": "64",
-			"JAEGER_REPORTER_FLUSH_INTERVAL": "10s",
-			"JAEGER_TRACEID_128BIT":          "true",
+			"JAEGER_SAMPLER_TYPE":   "const",
+			"JAEGER_SAMPLER_PARAM":  "1",
+			"JAEGER_TRACEID_128BIT": "true",
+			// Reporter vars (MaxQueueSize, FlushInterval) are NOT set by init;
+			// the Jaeger client's built-in defaults (100, 1s) are used instead.
 		}
 		for env, want := range checks {
 			if got := os.Getenv(env); got != "" && got != want {
