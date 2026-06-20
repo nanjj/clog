@@ -1,6 +1,7 @@
 package clog_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/nanjj/clog"
@@ -158,3 +159,154 @@ func TestStartSpanFromContext_ErrorSpan(t *testing.T) {
 	)
 	span.Finish()
 }
+
+// --- SpanFromEnv tests ---
+
+func TestSpanFromEnv_MissingEnv(t *testing.T) {
+	tr, err := clog.NewTracer("span-env-missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	if got := clog.SpanFromEnv(t.Context()); got != nil {
+		t.Errorf("SpanFromEnv() = %v, want nil (no env vars)", got)
+	}
+}
+
+func TestSpanFromEnv_CLOG_TRACEPARENT(t *testing.T) {
+	t.Setenv("CLOG_TRACEPARENT",
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+
+	tr, err := clog.NewTracer("span-env-clog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	spanCtx := clog.SpanFromEnv(t.Context())
+	if spanCtx == nil {
+		t.Fatal("SpanFromEnv() returned nil, want non-nil SpanContext")
+	}
+}
+
+func TestSpanFromEnv_UBER_TRACE_ID(t *testing.T) {
+	t.Setenv("UBER_TRACE_ID",
+		"4bf92f3577b34da6a3ce929d0e0e4736:00f067aa0ba902b7:0:01")
+
+	tr, err := clog.NewTracer("span-env-uber")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	spanCtx := clog.SpanFromEnv(t.Context())
+	if spanCtx == nil {
+		t.Fatal("SpanFromEnv() returned nil, want non-nil SpanContext")
+	}
+}
+
+func TestSpanFromEnv_NoGlobalTracer(t *testing.T) {
+	t.Setenv("CLOG_TRACEPARENT",
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+
+	// Ensure global tracer is NOT a clog.Tracer (so GlobalTracer() returns nil).
+	old := opentracing.GlobalTracer()
+	defer opentracing.SetGlobalTracer(old)
+	opentracing.SetGlobalTracer(opentracing.NoopTracer{})
+
+	if got := clog.SpanFromEnv(t.Context()); got != nil {
+		t.Errorf("SpanFromEnv() = %v, want nil (no clog global tracer)", got)
+	}
+}
+
+func TestSpanFromEnv_InvalidFormat(t *testing.T) {
+	t.Setenv("CLOG_TRACEPARENT", "invalid-format-data-here")
+
+	tr, err := clog.NewTracer("span-env-invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	if got := clog.SpanFromEnv(t.Context()); got != nil {
+		t.Errorf("SpanFromEnv() = %v, want nil (invalid format)", got)
+	}
+}
+
+// --- InjectToEnv tests ---
+
+func TestInjectToEnv(t *testing.T) {
+	tr, err := clog.NewTracer("inject-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	span, _ := clog.StartSpanFromContext(t.Context(), "inject-span")
+	defer span.Finish()
+
+	t.Cleanup(func() { os.Unsetenv("CLOG_TRACEPARENT") })
+	clog.InjectToEnv(span)
+
+	tp := os.Getenv("CLOG_TRACEPARENT")
+	if tp == "" {
+		t.Fatal("CLOG_TRACEPARENT not set after InjectToEnv")
+	}
+	// W3C format: "00-" + 32 hex + "-" + 16 hex + "-" + 2 hex = 55 chars
+	if len(tp) < 50 {
+		t.Errorf("CLOG_TRACEPARENT = %q, looks too short (len=%d)", tp, len(tp))
+	}
+}
+
+func TestInjectToEnv_ThenStartSpanFromContext(t *testing.T) {
+	// Simulate full round-trip: parent injects, child uses via StartSpanFromContext.
+	tr, err := clog.NewTracer("inject-roundtrip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	// Parent
+	parent, _ := clog.StartSpanFromContext(t.Context(), "parent")
+	clog.InjectToEnv(parent)
+	parent.Finish()
+	t.Cleanup(func() { os.Unsetenv("CLOG_TRACEPARENT") })
+
+	// Child — uses env var set by InjectToEnv above
+	child, _ := clog.StartSpanFromContext(t.Context(), "child")
+	child.LogKV("event", "roundtrip-success")
+	child.Finish()
+}
+
+// --- SpanFromContext tests ---
+
+func TestSpanFromContext(t *testing.T) {
+	tr, err := clog.NewTracer("span-from-ctx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	t.Run("no span in context", func(t *testing.T) {
+		if got := clog.SpanFromContext(t.Context()); got != nil {
+			t.Errorf("SpanFromContext() = %v, want nil", got)
+		}
+	})
+
+	t.Run("span in context", func(t *testing.T) {
+		span, ctx := clog.StartSpanFromContext(t.Context(), "test-span")
+		defer span.Finish()
+		if got := clog.SpanFromContext(ctx); got == nil {
+			t.Error("SpanFromContext() = nil, want non-nil")
+		}
+	})
+}
+
