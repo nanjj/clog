@@ -113,56 +113,43 @@ Returns the previously registered global tracer, or `nil` if none was set.
 
 Starts a new span. If `ctx` already contains a parent span, the new span becomes a child of it; otherwise a root span is created via the global tracer. Returns the span and an updated context that carries it.
 
+### `clog.ExtractFromEnv(ctx) opentracing.SpanContext`
+
+Extracts a parent span context from environment variables (`CLOG_TRACEPARENT`—W3C Trace Context, fallback `UBER_TRACE_ID`—Jaeger legacy). Used together with `InjectToEnv` to propagate traces across process boundaries.
+
+### `clog.InjectToEnv(span opentracing.Span)`
+
+Serialises a span's context into environment variables (`CLOG_TRACEPARENT`, `CLOG_BAGGAGE_*`) so a child process can pick it up via `ExtractFromEnv`.
+
+```go
+// Parent process
+span, ctx := clog.StartSpanFromContext(ctx, "parent")
+clog.InjectToEnv(span)
+
+cmd := exec.Command("child-binary")
+cmd.Env = os.Environ() // carries CLOG_TRACEPARENT
+cmd.Run()
+```
+
+```go
+// Child process (child-binary)
+ctx := context.Background()
+parentCtx := clog.ExtractFromEnv(ctx) // reads CLOG_TRACEPARENT
+span, ctx := clog.StartSpanFromContext(ctx, "child")
+// span is a child of the parent
+defer span.Finish()
+```
+
 ## Important Notes
+
 
 1. **128-bit trace IDs**: clog enables 128-bit trace IDs by default (`JAEGER_TRACEID_128BIT=true`). This aligns with the W3C Trace Context and OpenTelemetry standards. To use legacy 64-bit trace IDs, set `JAEGER_TRACEID_128BIT=false` before importing clog, or pass `clog.With128Bit(false)` to `NewTracerWithOptions`.
 
 2. **UDP packet limits**: Jaeger's agent accepts spans over UDP. If you log many events in a single span, the combined payload may exceed the ~65 KB UDP packet limit. Use `JAEGER_REPORTER_MAX_QUEUE_SIZE` and `JAEGER_REPORTER_FLUSH_INTERVAL` to tune batching.
-
 3. **Always close**: `defer tracer.Close()` in `main` and `defer span.Finish()` in each traced operation are required. Without them, buffered spans may never reach the backend. `clog.CloseTracer(tracer)` is a nil-safe convenience wrapper.
 
 4. **Child span lifecycle**: A child span must be finished **before** its parent. The parent span only sends its logs and timing after `Finish()` is called.
 
 5. **init() side effects**: Importing clog sets Jaeger environment variable defaults (see table above). These are only applied when the corresponding env var is unset, so explicit env vars always win.
 
-## Example: Full flow
-
-```go
-package main
-
-import (
-    "context"
-    "log"
-
-    "github.com/nanjj/clog"
-)
-
-func main() {
-    tracer, err := clog.NewTracer("order-service")
-    if err != nil {
-        log.Fatal(err)
-    }
-    clog.SetGlobalTracer(tracer)
-    defer tracer.Close()
-
-    ctx := context.Background()
-    processOrder(ctx, "ord_001")
-}
-
-func processOrder(ctx context.Context, orderID string) {
-    span, ctx := clog.StartSpanFromContext(ctx, "processOrder")
-    defer span.Finish()
-
-    span.LogKV("order_id", orderID)
-
-    chargeCustomer(ctx, orderID)
-}
-
-func chargeCustomer(ctx context.Context, orderID string) {
-    span, ctx := clog.StartSpanFromContext(ctx, "chargeCustomer")
-    defer span.Finish()
-
-    span.LogKV("event", "payment_initiated", "order_id", orderID)
-    // ... payment logic ...
-}
-```
+6. **Cross-process propagation**: Use `InjectToEnv`/`ExtractFromEnv` to propagate traces across process boundaries (e.g., `exec.Command`). `ExtractFromEnv` is also called internally by `StartSpanFromContext` as a fallback when no parent span exists in context, so child processes can create child spans without calling `ExtractFromEnv` explicitly.
