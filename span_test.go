@@ -2,6 +2,7 @@ package clog_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/nanjj/clog"
@@ -248,19 +249,30 @@ func TestInjectToEnv(t *testing.T) {
 	defer tr.Close()
 	clog.SetGlobalTracer(tr)
 
+	// Set a pre-existing value to test restore
+	t.Setenv("CLOG_TRACEPARENT", "pre-existing-value")
+
 	span, _ := clog.StartSpanFromContext(t.Context(), "inject-span")
 	defer span.Finish()
 
-	t.Cleanup(func() { os.Unsetenv("CLOG_TRACEPARENT") })
-	clog.InjectToEnv(span)
+	restore := clog.InjectToEnv(span)
 
 	tp := os.Getenv("CLOG_TRACEPARENT")
 	if tp == "" {
 		t.Fatal("CLOG_TRACEPARENT not set after InjectToEnv")
 	}
+	if tp == "pre-existing-value" {
+		t.Fatal("CLOG_TRACEPARENT was not updated by InjectToEnv")
+	}
 	// W3C format: "00-" + 32 hex + "-" + 16 hex + "-" + 2 hex = 55 chars
 	if len(tp) < 50 {
 		t.Errorf("CLOG_TRACEPARENT = %q, looks too short (len=%d)", tp, len(tp))
+	}
+
+	// Verify restore reverts to pre-existing value
+	restore()
+	if got := os.Getenv("CLOG_TRACEPARENT"); got != "pre-existing-value" {
+		t.Errorf("after restore, CLOG_TRACEPARENT = %q, want %q", got, "pre-existing-value")
 	}
 }
 
@@ -275,14 +287,103 @@ func TestInjectToEnv_ThenStartSpanFromContext(t *testing.T) {
 
 	// Parent
 	parent, _ := clog.StartSpanFromContext(t.Context(), "parent")
-	clog.InjectToEnv(parent)
+	restore := clog.InjectToEnv(parent)
 	parent.Finish()
-	t.Cleanup(func() { os.Unsetenv("CLOG_TRACEPARENT") })
+	defer restore()
 
 	// Child — uses env var set by InjectToEnv above
 	child, _ := clog.StartSpanFromContext(t.Context(), "child")
 	child.LogKV("event", "roundtrip-success")
 	child.Finish()
+}
+
+// --- TraceEnv tests ---
+
+func TestTraceEnv(t *testing.T) {
+	tr, err := clog.NewTracer("trace-env-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	span, _ := clog.StartSpanFromContext(t.Context(), "trace-env-span")
+	defer span.Finish()
+
+	env := clog.TraceEnv(span)
+	if len(env) == 0 {
+		t.Fatal("TraceEnv() returned empty slice")
+	}
+
+	var foundTraceparent bool
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CLOG_TRACEPARENT=") {
+			foundTraceparent = true
+			tp := strings.TrimPrefix(kv, "CLOG_TRACEPARENT=")
+			if len(tp) < 50 {
+				t.Errorf("traceparent too short: %q", tp)
+			}
+		}
+	}
+	if !foundTraceparent {
+		t.Error("CLOG_TRACEPARENT not found in TraceEnv result")
+	}
+}
+
+func TestTraceEnv_NilSpan(t *testing.T) {
+	if got := clog.TraceEnv(nil); got != nil {
+		t.Errorf("TraceEnv(nil) = %v, want nil", got)
+	}
+}
+
+func TestTraceEnv_NoGlobalTracer(t *testing.T) {
+	// TraceEnv uses the span's own tracer, not the global tracer.
+	tr, err := clog.NewTracer("trace-env-no-global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	span, _ := clog.StartSpanFromContext(t.Context(), "no-global-span")
+	defer span.Finish()
+
+	// Don't set global tracer — should still work since span has its own
+	env := clog.TraceEnv(span)
+	if len(env) == 0 {
+		t.Fatal("TraceEnv() returned empty even without global tracer")
+	}
+}
+
+func TestTraceEnv_Baggage(t *testing.T) {
+	tr, err := clog.NewTracer("trace-env-baggage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	span, _ := clog.StartSpanFromContext(t.Context(), "baggage-span")
+	span.SetBaggageItem("user.id", "42")
+	span.SetBaggageItem("request.id", "abc-123")
+	defer span.Finish()
+
+	env := clog.TraceEnv(span)
+
+	var foundUserID, foundRequestID bool
+	for _, kv := range env {
+		switch {
+		case kv == "CLOG_BAGGAGE_USER.ID=42":
+			foundUserID = true
+		case kv == "CLOG_BAGGAGE_REQUEST.ID=abc-123":
+			foundRequestID = true
+		}
+	}
+	if !foundUserID {
+		t.Errorf("CLOG_BAGGAGE_USER.ID=42 not found in env: %q", env)
+	}
+	if !foundRequestID {
+		t.Errorf("CLOG_BAGGAGE_REQUEST.ID=abc-123 not found in env: %q", env)
+	}
 }
 
 // --- SpanFromContext tests ---
@@ -309,4 +410,3 @@ func TestSpanFromContext(t *testing.T) {
 		}
 	})
 }
-

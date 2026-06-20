@@ -116,33 +116,36 @@ func traceparentToJaeger(tp string) string {
 	return fmt.Sprintf("%s:%s:0:%s", parts[1], parts[2], flags)
 }
 
-// InjectToEnv injects the span's context into environment variables so that
-// child processes can continue the trace via StartSpanFromContext / ExtractFromEnv.
+// TraceEnv returns environment variable KEY=VALUE strings representing
+// the span's trace context, suitable for propagating to child processes.
 //
-// Call before exec'ing a child process:
+// Unlike InjectToEnv, TraceEnv does not modify the process environment.
+// The caller controls how the variables reach the child process:
 //
-//	span, _ := clog.StartSpanFromContext(ctx, "parent-op")
-//	defer span.Finish()
-//	clog.InjectToEnv(span)
-//	// exec child ...
+//	cmd.Env = append(os.Environ(), clog.TraceEnv(span)...)
 //
-// Sets CLOG_TRACEPARENT (W3C format) and CLOG_BAGGAGE_* for baggage items.
-func InjectToEnv(span opentracing.Span) {
+// Currently returns CLOG_TRACEPARENT and CLOG_BAGGAGE_* entries for
+// baggage items. Returns nil if span is nil or context injection fails.
+func TraceEnv(span opentracing.Span) []string {
+	if span == nil {
+		return nil
+	}
 	tracer := span.Tracer()
 	if tracer == nil {
-		return
+		return nil
 	}
 
 	carrier := opentracing.TextMapCarrier{}
 	if err := tracer.Inject(span.Context(), opentracing.TextMap, carrier); err != nil {
-		return
+		return nil
 	}
+
+	var env []string
 
 	// Core trace context as W3C Traceparent
 	if uber, ok := carrier["uber-trace-id"]; ok {
-		tp := jaegerToTraceparent(uber)
-		if tp != "" {
-			os.Setenv("CLOG_TRACEPARENT", tp)
+		if tp := jaegerToTraceparent(uber); tp != "" {
+			env = append(env, "CLOG_TRACEPARENT="+tp)
 		}
 	}
 
@@ -152,8 +155,61 @@ func InjectToEnv(span opentracing.Span) {
 			continue
 		}
 		key := strings.TrimPrefix(k, "uberctx-")
-		osenv := fmt.Sprintf("CLOG_BAGGAGE_%s", strings.ToUpper(key))
-		os.Setenv(osenv, v)
+		env = append(env, fmt.Sprintf("CLOG_BAGGAGE_%s=%s", strings.ToUpper(key), v))
+	}
+
+	return env
+}
+
+// InjectToEnv injects the span's context into environment variables so that
+// child processes can continue the trace via StartSpanFromContext / ExtractFromEnv.
+//
+// Returns a restore function that reverts the environment to its previous state.
+// Typical usage:
+//
+//	span, _ := clog.StartSpanFromContext(ctx, "parent-op")
+//	defer span.Finish()
+//	restore := clog.InjectToEnv(span)
+//	defer restore()
+//	// exec child ...
+//
+// Sets CLOG_TRACEPARENT (W3C format) and CLOG_BAGGAGE_* for baggage items.
+//
+// For scenarios where modifying the global process environment is
+// undesirable (e.g., constructing cmd.Env), use TraceEnv instead.
+func InjectToEnv(span opentracing.Span) (restore func()) {
+	env := TraceEnv(span)
+	if len(env) == 0 {
+		return func() {}
+	}
+
+	// Snapshot: save old values, set new ones
+	type entry struct {
+		key        string
+		oldValue   string
+		wasPresent bool
+	}
+	var saved []entry
+
+	for _, kv := range env {
+		eq := strings.IndexByte(kv, '=')
+		if eq < 0 {
+			continue
+		}
+		key := kv[:eq]
+		oldVal, wasPresent := os.LookupEnv(key)
+		saved = append(saved, entry{key, oldVal, wasPresent})
+		os.Setenv(key, kv[eq+1:])
+	}
+
+	return func() {
+		for _, e := range saved {
+			if e.wasPresent {
+				os.Setenv(e.key, e.oldValue)
+			} else {
+				os.Unsetenv(e.key)
+			}
+		}
 	}
 }
 
@@ -187,4 +243,3 @@ func jaegerToTraceparent(uber string) string {
 
 	return fmt.Sprintf("00-%s-%s-%s", traceID, spanID, flags)
 }
-

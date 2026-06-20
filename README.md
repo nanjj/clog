@@ -115,16 +115,17 @@ Starts a new span. If `ctx` already contains a parent span, the new span becomes
 
 ### `clog.ExtractFromEnv(ctx) opentracing.SpanContext`
 
-Extracts a parent span context from environment variables (`CLOG_TRACEPARENT`—W3C Trace Context, fallback `UBER_TRACE_ID`—Jaeger legacy). Used together with `InjectToEnv` to propagate traces across process boundaries.
+Extracts a parent span context from environment variables (`CLOG_TRACEPARENT`—W3C Trace Context, fallback `UBER_TRACE_ID`—Jaeger legacy). Used together with `InjectToEnv` or `TraceEnv` to propagate traces across process boundaries.
 
-### `clog.InjectToEnv(span opentracing.Span)`
+### `clog.InjectToEnv(span opentracing.Span) func()`
 
-Serialises a span's context into environment variables (`CLOG_TRACEPARENT`, `CLOG_BAGGAGE_*`) so a child process can pick it up via `ExtractFromEnv`.
+Serialises a span's context into environment variables (`CLOG_TRACEPARENT`, `CLOG_BAGGAGE_*`) so a child process can pick it up via `ExtractFromEnv`. Returns a **restore function** that reverts the environment to its previous state.
 
 ```go
 // Parent process
 span, ctx := clog.StartSpanFromContext(ctx, "parent")
-clog.InjectToEnv(span)
+restore := clog.InjectToEnv(span)
+defer restore()
 
 cmd := exec.Command("child-binary")
 cmd.Env = os.Environ() // carries CLOG_TRACEPARENT
@@ -140,8 +141,25 @@ span, ctx := clog.StartSpanFromContext(ctx, "child")
 defer span.Finish()
 ```
 
-## Important Notes
+### `clog.TraceEnv(span opentracing.Span) []string`
 
+Returns the span's trace context as `KEY=VALUE` strings suitable for appending to `os.Environ()` or `cmd.Env`. Unlike `InjectToEnv`, **does not modify the process environment** — ideal for constructing explicit env slices without global side effects.
+
+```go
+// Using TraceEnv with cmd.Env (no global side effects)
+span, ctx := clog.StartSpanFromContext(ctx, "parent")
+cmd := exec.Command("child-binary")
+cmd.Env = append(os.Environ(), clog.TraceEnv(span)...)
+cmd.Run()
+```
+
+```go
+// Using TraceEnv with mvdan/sh (explicit env slice)
+envVars := append(config.EnvVars, clog.TraceEnv(span)...)
+r := interp.New(interp.Env(expand.ListEnviron(envVars...)))
+```
+
+## Important Notes
 
 1. **128-bit trace IDs**: clog enables 128-bit trace IDs by default (`JAEGER_TRACEID_128BIT=true`). This aligns with the W3C Trace Context and OpenTelemetry standards. To use legacy 64-bit trace IDs, set `JAEGER_TRACEID_128BIT=false` before importing clog, or pass `clog.With128Bit(false)` to `NewTracerWithOptions`.
 
@@ -152,4 +170,4 @@ defer span.Finish()
 
 5. **init() side effects**: Importing clog sets Jaeger environment variable defaults (see table above). These are only applied when the corresponding env var is unset, so explicit env vars always win.
 
-6. **Cross-process propagation**: Use `InjectToEnv`/`ExtractFromEnv` to propagate traces across process boundaries (e.g., `exec.Command`). `ExtractFromEnv` is also called internally by `StartSpanFromContext` as a fallback when no parent span exists in context, so child processes can create child spans without calling `ExtractFromEnv` explicitly.
+6. **Cross-process propagation**: Use `InjectToEnv`/`ExtractFromEnv` or `TraceEnv` to propagate traces across process boundaries (e.g., `exec.Command`). `ExtractFromEnv` is also called internally by `StartSpanFromContext` as a fallback when no parent span exists in context, so child processes can create child spans without calling `ExtractFromEnv` explicitly. Prefer `TraceEnv` when you control the child's env slice (no global side effects); use `InjectToEnv` with `defer restore()` when modifying `os.Environ()` is more convenient.
