@@ -160,9 +160,9 @@ func TestStartSpanFromContext_ErrorSpan(t *testing.T) {
 	span.Finish()
 }
 
-// --- SpanFromEnv tests ---
+// --- ExtractFromEnv tests ---
 
-func TestSpanFromEnv_MissingEnv(t *testing.T) {
+func TestExtractFromEnv_MissingEnv(t *testing.T) {
 	tr, err := clog.NewTracer("span-env-missing")
 	if err != nil {
 		t.Fatal(err)
@@ -170,12 +170,12 @@ func TestSpanFromEnv_MissingEnv(t *testing.T) {
 	defer tr.Close()
 	clog.SetGlobalTracer(tr)
 
-	if got := clog.SpanFromEnv(t.Context()); got != nil {
-		t.Errorf("SpanFromEnv() = %v, want nil (no env vars)", got)
+	if got := clog.ExtractFromEnv(t.Context()); got != nil {
+		t.Errorf("ExtractFromEnv() = %v, want nil (no env vars)", got)
 	}
 }
 
-func TestSpanFromEnv_CLOG_TRACEPARENT(t *testing.T) {
+func TestExtractFromEnv_CLOG_TRACEPARENT(t *testing.T) {
 	t.Setenv("CLOG_TRACEPARENT",
 		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 
@@ -186,13 +186,13 @@ func TestSpanFromEnv_CLOG_TRACEPARENT(t *testing.T) {
 	defer tr.Close()
 	clog.SetGlobalTracer(tr)
 
-	spanCtx := clog.SpanFromEnv(t.Context())
+	spanCtx := clog.ExtractFromEnv(t.Context())
 	if spanCtx == nil {
-		t.Fatal("SpanFromEnv() returned nil, want non-nil SpanContext")
+		t.Fatal("ExtractFromEnv() returned nil, want non-nil SpanContext")
 	}
 }
 
-func TestSpanFromEnv_UBER_TRACE_ID(t *testing.T) {
+func TestExtractFromEnv_UBER_TRACE_ID(t *testing.T) {
 	t.Setenv("UBER_TRACE_ID",
 		"4bf92f3577b34da6a3ce929d0e0e4736:00f067aa0ba902b7:0:01")
 
@@ -203,13 +203,13 @@ func TestSpanFromEnv_UBER_TRACE_ID(t *testing.T) {
 	defer tr.Close()
 	clog.SetGlobalTracer(tr)
 
-	spanCtx := clog.SpanFromEnv(t.Context())
+	spanCtx := clog.ExtractFromEnv(t.Context())
 	if spanCtx == nil {
-		t.Fatal("SpanFromEnv() returned nil, want non-nil SpanContext")
+		t.Fatal("ExtractFromEnv() returned nil, want non-nil SpanContext")
 	}
 }
 
-func TestSpanFromEnv_NoGlobalTracer(t *testing.T) {
+func TestExtractFromEnv_NoGlobalTracer(t *testing.T) {
 	t.Setenv("CLOG_TRACEPARENT",
 		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 
@@ -218,12 +218,12 @@ func TestSpanFromEnv_NoGlobalTracer(t *testing.T) {
 	defer opentracing.SetGlobalTracer(old)
 	opentracing.SetGlobalTracer(opentracing.NoopTracer{})
 
-	if got := clog.SpanFromEnv(t.Context()); got != nil {
-		t.Errorf("SpanFromEnv() = %v, want nil (no clog global tracer)", got)
+	if got := clog.ExtractFromEnv(t.Context()); got != nil {
+		t.Errorf("ExtractFromEnv() = %v, want nil (no clog global tracer)", got)
 	}
 }
 
-func TestSpanFromEnv_InvalidFormat(t *testing.T) {
+func TestExtractFromEnv_InvalidFormat(t *testing.T) {
 	t.Setenv("CLOG_TRACEPARENT", "invalid-format-data-here")
 
 	tr, err := clog.NewTracer("span-env-invalid")
@@ -233,8 +233,8 @@ func TestSpanFromEnv_InvalidFormat(t *testing.T) {
 	defer tr.Close()
 	clog.SetGlobalTracer(tr)
 
-	if got := clog.SpanFromEnv(t.Context()); got != nil {
-		t.Errorf("SpanFromEnv() = %v, want nil (invalid format)", got)
+	if got := clog.ExtractFromEnv(t.Context()); got != nil {
+		t.Errorf("ExtractFromEnv() = %v, want nil (invalid format)", got)
 	}
 }
 

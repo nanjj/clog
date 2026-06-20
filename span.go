@@ -12,7 +12,7 @@ import (
 // StartSpanFromContext starts a span from context and returns the span
 // and new context with the span. If a parent span exists in the context,
 // the new span is created as a child of it. Otherwise, if a remote parent
-// SpanContext has been propagated via environment variables (see SpanFromEnv),
+// SpanContext has been propagated via environment variables (see ExtractFromEnv),
 // the new span is created as a child of that remote parent. Otherwise a
 // root span is started via the global tracer.
 func StartSpanFromContext(ctx context.Context,
@@ -28,7 +28,7 @@ func StartSpanFromContext(ctx context.Context,
 	} else {
 		// 2. Try remote parent from environment variables
 		tracer = opentracing.GlobalTracer()
-		if spanCtx := SpanFromEnv(ctx); spanCtx != nil {
+		if spanCtx := ExtractFromEnv(ctx); spanCtx != nil {
 			opts = append(opts, opentracing.ChildOf(spanCtx))
 		}
 	}
@@ -43,7 +43,7 @@ func SpanFromContext(ctx context.Context) opentracing.Span {
 	return opentracing.SpanFromContext(ctx)
 }
 
-// SpanFromEnv extracts a remote parent SpanContext from environment variables
+// ExtractFromEnv extracts a remote parent SpanContext from environment variables
 // propagated by a parent process. Returns nil if no trace context is found.
 //
 // Supported env vars (checked in order):
@@ -61,7 +61,7 @@ func SpanFromContext(ctx context.Context) opentracing.Span {
 // UBER_TRACE_ID format (Jaeger legacy):
 //
 //	{trace-id}:{span-id}:{parent-span-id}:{flags}
-func SpanFromEnv(_ context.Context) opentracing.SpanContext {
+func ExtractFromEnv(_ context.Context) opentracing.SpanContext {
 	tracer := GlobalTracer()
 	if tracer == nil {
 		return nil
@@ -117,7 +117,7 @@ func traceparentToJaeger(tp string) string {
 }
 
 // InjectToEnv injects the span's context into environment variables so that
-// child processes can continue the trace via StartSpanFromContext / SpanFromEnv.
+// child processes can continue the trace via StartSpanFromContext / ExtractFromEnv.
 //
 // Call before exec'ing a child process:
 //
