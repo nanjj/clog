@@ -122,19 +122,30 @@ func TestTracer_MultipleSpans(t *testing.T) {
 }
 
 func TestTracer_InitDefaults(t *testing.T) {
-	// init() sets defaults at package load time. Verify they are in effect.
-	t.Run("env defaults", func(t *testing.T) {
-		// If another test cleared these, skip env verification.
+	// applyJaegerDefaults is called lazily via sync.Once at the first
+	// NewTracer call. Other tests may have already triggered it, so
+	// we verify the observable contract instead of env var state.
+
+	t.Run("user override before NewTracer", func(t *testing.T) {
+		t.Setenv("JAEGER_SAMPLER_TYPE", "probabilistic")
+		t.Setenv("JAEGER_SAMPLER_PARAM", "0.5")
+		t.Setenv("JAEGER_TRACEID_128BIT", "false")
+		t.Setenv("JAEGER_SERVICE_NAME", "override-test")
+		tr, err := clog.NewTracer("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr.Close()
+
+		// User-set values must be preserved, not overwritten by defaults
 		checks := map[string]string{
-			"JAEGER_SAMPLER_TYPE":   "const",
-			"JAEGER_SAMPLER_PARAM":  "1",
-			"JAEGER_TRACEID_128BIT": "true",
-			// Reporter vars (MaxQueueSize, FlushInterval) are NOT set by init;
-			// the Jaeger client's built-in defaults (100, 1s) are used instead.
+			"JAEGER_SAMPLER_TYPE":   "probabilistic",
+			"JAEGER_SAMPLER_PARAM":  "0.5",
+			"JAEGER_TRACEID_128BIT": "false",
 		}
 		for env, want := range checks {
-			if got := os.Getenv(env); got != "" && got != want {
-				t.Errorf("%s = %q, want %q or empty", env, got, want)
+			if got := os.Getenv(env); got != want {
+				t.Errorf("%s = %q, want %q", env, got, want)
 			}
 		}
 	})

@@ -91,7 +91,7 @@ tracer, err := clog.NewTracerWithOptions("my-service",
 
 ### `clog.With128Bit(enabled bool) Option`
 
-Enables or disables 128-bit trace IDs. Enabled by default via `init()` — pass `With128Bit(false)` to use legacy 64-bit trace IDs.
+Enables or disables 128-bit trace IDs. Enabled by default — pass `With128Bit(false)` to use legacy 64-bit trace IDs.
 
 ### `clog.CloseTracer(tracer *Tracer) error`
 
@@ -168,6 +168,6 @@ r := interp.New(interp.Env(expand.ListEnviron(envVars...)))
 
 4. **Child span lifecycle**: A child span must be finished **before** its parent. The parent span only sends its logs and timing after `Finish()` is called.
 
-5. **init() side effects**: Importing clog sets Jaeger environment variable defaults (see table above). These are only applied when the corresponding env var is unset, so explicit env vars always win.
+5. **Lazy defaults**: Jaeger environment variable defaults (see table above) are only set on the first call to `NewTracer` or `NewTracerWithOptions`, and only when the corresponding env var is unset. Set any of these before calling `NewTracer` to override. No env vars are modified at import time.
 
 6. **Cross-process propagation**: Use `InjectToEnv`/`ExtractFromEnv` or `TraceEnv` to propagate traces across process boundaries (e.g., `exec.Command`). `ExtractFromEnv` is also called internally by `StartSpanFromContext` as a fallback when no parent span exists in context, so child processes can create child spans without calling `ExtractFromEnv` explicitly. Prefer `TraceEnv` when you control the child's env slice (no global side effects); use `InjectToEnv` with `defer restore()` when modifying `os.Environ()` is more convenient.

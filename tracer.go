@@ -13,54 +13,62 @@
 //	defer span.Finish()
 //	span.LogKV("event", "work-done", "count", 42)
 //
-// Environment variables optionally set by init (only when unset):
+// Environment variables set by applyJaegerDefaults at first NewTracer call
+// (only when unset):
 //
 //	JAEGER_SAMPLER_TYPE    const
 //	JAEGER_SAMPLER_PARAM   1
 //	JAEGER_TRACEID_128BIT  true
 //
-// Reporter env vars MaxQueueSize and FlushInterval are NOT set by init;
-// the Jaeger client's built-in defaults (100, 1s) are used instead.
-// Set any of these before importing clog to override the default.
+// Reporter env vars MaxQueueSize and FlushInterval are NOT set by
+// applyJaegerDefaults; the Jaeger client's built-in defaults (100, 1s)
+// are used instead.
+//
+// Set any of these before calling NewTracer to override the default.
 // Use NewTracerWithOptions for programmatic control.
 package clog
 
 import (
 	"io"
 	"os"
+	"sync"
 
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/uber/jaeger-client-go/config"
 )
 
-// Default environment variable keys set by init.
+// Default environment variable keys set by applyJaegerDefaults.
 const (
 	envJaegerSamplerType  = "JAEGER_SAMPLER_TYPE"
 	envJaegerSamplerParam = "JAEGER_SAMPLER_PARAM"
 	envJaeger128Bit       = "JAEGER_TRACEID_128BIT"
 )
 
-// init sets sensible Jaeger defaults. Variables already set in the
-// environment are left untouched.
+var jaegerDefaultsOnce sync.Once
+
+// applyJaegerDefaults sets sensible Jaeger defaults for env vars that are
+// not already set. Called once at the first NewTracer call, so users can
+// set any of these before calling NewTracer to override.
 //
 // Reporter defaults (MaxQueueSize=100, FlushInterval=1s) are NOT set here
 // because the Jaeger client already provides well-tuned built-in values.
 // Overriding them would risk queue overflow and span loss.
-func init() {
-	if os.Getenv(envJaegerSamplerType) == "" {
-		os.Setenv(envJaegerSamplerType, "const")
-	}
-	if os.Getenv(envJaegerSamplerParam) == "" {
-		os.Setenv(envJaegerSamplerParam, "1")
-	}
-	// 128-bit trace IDs are the modern standard (W3C Trace Context,
-	// OpenTelemetry). Only override when unset so users can opt out
-	// via export JAEGER_TRACEID_128BIT=false.
-	if os.Getenv(envJaeger128Bit) == "" {
-		os.Setenv(envJaeger128Bit, "true")
-	}
+func applyJaegerDefaults() {
+	jaegerDefaultsOnce.Do(func() {
+		if os.Getenv(envJaegerSamplerType) == "" {
+			os.Setenv(envJaegerSamplerType, "const")
+		}
+		if os.Getenv(envJaegerSamplerParam) == "" {
+			os.Setenv(envJaegerSamplerParam, "1")
+		}
+		// 128-bit trace IDs are the modern standard (W3C Trace Context,
+		// OpenTelemetry). Only override when unset so users can opt out
+		// via export JAEGER_TRACEID_128BIT=false.
+		if os.Getenv(envJaeger128Bit) == "" {
+			os.Setenv(envJaeger128Bit, "true")
+		}
+	})
 }
-
 
 // Tracer wraps an OpenTracing tracer with its io.Closer.
 // Call Close to flush pending spans before the process exits.
@@ -73,6 +81,7 @@ type Tracer struct {
 // The name is used as JAEGER_SERVICE_NAME. Additional config.Option values
 // (e.g. config.Tag) can be passed to customise the tracer.
 func NewTracer(name string, opts ...config.Option) (tracer *Tracer, err error) {
+	applyJaegerDefaults()
 	c, err := config.FromEnv()
 	if err != nil {
 		return
@@ -97,7 +106,7 @@ func NewTracer(name string, opts ...config.Option) (tracer *Tracer, err error) {
 type Option func()
 
 // With128Bit enables or disables 128-bit trace IDs.
-// Enabled by default via init. Pass With128Bit(false) to use legacy
+// Enabled by default. Pass With128Bit(false) to use legacy
 // 64-bit trace IDs.
 func With128Bit(enabled bool) Option {
 	return func() {
