@@ -164,6 +164,9 @@ func TestStartSpanFromContext_ErrorSpan(t *testing.T) {
 // --- ExtractFromEnv tests ---
 
 func TestExtractFromEnv_MissingEnv(t *testing.T) {
+	t.Setenv("CLOG_TRACEPARENT", "")
+	t.Setenv("UBER_TRACE_ID", "")
+
 	tr, err := clog.NewTracer("span-env-missing")
 	if err != nil {
 		t.Fatal(err)
