@@ -43,8 +43,21 @@ func SpanFromContext(ctx context.Context) opentracing.Span {
 	return opentracing.SpanFromContext(ctx)
 }
 
+// LogKV writes key-value pairs to the active span in context, if any.
+// Safe to call anywhere — silently no-ops when there is no active span.
+//
+// Example:
+//
+//	clog.LogKV(ctx, "event", "cache_miss", "key", req.Path)
+func LogKV(ctx context.Context, keyValues ...interface{}) {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span.LogKV(keyValues...)
+	}
+}
+
 // ExtractFromEnv extracts a remote parent SpanContext from environment variables
 // propagated by a parent process. Returns nil if no trace context is found.
+
 //
 // Supported env vars (checked in order):
 //   - CLOG_TRACEPARENT  (W3C Trace Context, preferred)

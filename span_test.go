@@ -468,3 +468,27 @@ func TestSpanFromContext(t *testing.T) {
 		}
 	})
 }
+
+// --- LogKV tests ---
+
+func TestLogKV(t *testing.T) {
+	t.Run("no-ops without span in context", func(t *testing.T) {
+		// Should not panic when there is no span in context
+		clog.LogKV(t.Context(), "event", "test", "key", "value")
+	})
+
+	t.Run("writes to span in context", func(t *testing.T) {
+		tr, err := clog.NewTracer("logkv-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tr.Close()
+		clog.SetGlobalTracer(tr)
+
+		span, ctx := clog.StartSpanFromContext(t.Context(), "logkv-span")
+		defer span.Finish()
+
+		// Should not panic — LogKV writes key-value pairs to the active span
+		clog.LogKV(ctx, "event", "cache_miss", "key", "mykey", "latency_ms", 42)
+	})
+}
