@@ -1,15 +1,37 @@
-// Package clog — slog integration.
+// Package clog — contextual logging with OpenTracing integration.
 //
-// This file provides the slog.Handler integration for clog, allowing
-// structured log records to be written to OpenTracing spans via slog.
+// Two paths from code to span:
 //
-// Two entry points:
+//  1. Direct:  LogAttrs(ctx, level, msg, attrs...slog.Attr)
+//     Writes to slog.Default() AND the active OpenTracing span.
 //
-//   - LogAttrs: convenience function writing to both slog and the active span.
-//   - NewSpanHandler: a slog.Handler that writes records to the active span.
+//  2. Handler: NewSpanHandler() → slog.Handler
+//     Plumbed via slog.SetDefault or slog.New.
+//     Every slog call reaching that handler writes to the active span.
 //
 // Both are safe to call anywhere — they silently no-op when there is no
 // active span in the context.
+//
+// # Span event naming convention
+//
+// The span event "event" field is always set to the log message (msg).
+// This keeps event names human-readable and searchable in trace UIs.
+// Callers should use descriptive messages that double as event names,
+// e.g. "request started", "cache hit", "handleLogin".
+//
+// Attributes are preserved with their slog types mapped to the closest
+// OpenTracing log.Field type (string, int64, float64, bool, duration).
+// Groups are flattened with dot-separated keys (e.g. "http.method").
+//
+// Example:
+//
+//	clog.LogAttrs(ctx, slog.LevelInfo, "request handled",
+//	    slog.String("method", r.Method),
+//	    slog.Int("status", 200),
+//	    slog.Duration("latency", dur),
+//	)
+//
+// This writes a span event: event="request handled", method=GET, status=200, latency=1.2s.
 
 package clog
 
@@ -27,8 +49,8 @@ import (
 // LogAttrs writes a log record at the given level via slog, and also writes
 // the message and attributes to the active OpenTracing span in ctx (if any).
 //
-// The span event uses the convention event=<msg>. Attributes are preserved
-// with their slog types (string, int, bool, etc.) mapped to the closest
+// The span event uses the convention event=<msg> (see package doc).
+// Attributes are preserved with their slog types mapped to the closest
 // OpenTracing log.Field type.
 //
 // Example:
@@ -95,6 +117,10 @@ func (h *spanHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle writes the slog record to the active OpenTracing span in ctx.
 // No-op when ctx contains no span.
+//
+// The span event field is set to r.Message (consistent with LogAttrs).
+// Level is written as a separate field. See package doc for the full
+// naming convention.
 func (h *spanHandler) Handle(ctx context.Context, r slog.Record) error {
 	span := opentracing.SpanFromContext(ctx)
 	if span == nil {
@@ -109,8 +135,8 @@ func (h *spanHandler) Handle(ctx context.Context, r slog.Record) error {
 	attrCount := len(h.attrs) + r.NumAttrs()
 	fields := make([]log.Field, 0, 3+attrCount)
 
-	// Event message
-	fields = append(fields, log.String("event", r.Time.Format(time.RFC3339Nano)+" "+r.Message))
+	// Event message — consistent with LogAttrs: event=<msg>
+	fields = append(fields, log.String("event", r.Message))
 
 	// Level
 	fields = append(fields, log.String("level", r.Level.String()))
