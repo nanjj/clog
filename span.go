@@ -161,6 +161,35 @@ func TraceEnv(span opentracing.Span) []string {
 	return env
 }
 
+// TraceparentOf returns the W3C traceparent string for the given span.
+// Returns "" if the span is nil or context injection fails.
+//
+// Unlike TraceEnv, which returns KEY=VALUE pairs for process propagation,
+// TraceparentOf returns only the traceparent value. This is useful when
+// you need the raw traceparent string — for example, injecting into
+// MCP _meta fields or HTTP headers:
+//
+//	if tp := clog.TraceparentOf(span); tp != "" {
+//	    params.SetMeta(map[string]any{"traceparent": tp})
+//	}
+func TraceparentOf(span opentracing.Span) string {
+	if span == nil {
+		return ""
+	}
+	tracer := span.Tracer()
+	if tracer == nil {
+		return ""
+	}
+	carrier := opentracing.TextMapCarrier{}
+	if err := tracer.Inject(span.Context(), opentracing.TextMap, carrier); err != nil {
+		return ""
+	}
+	if uber, ok := carrier["uber-trace-id"]; ok {
+		return jaegerToTraceparent(uber)
+	}
+	return ""
+}
+
 // InjectToEnv injects the span's context into environment variables so that
 // child processes can continue the trace via StartSpanFromContext / ExtractFromEnv.
 //

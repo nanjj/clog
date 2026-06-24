@@ -389,6 +389,61 @@ func TestTraceEnv_Baggage(t *testing.T) {
 	}
 }
 
+// --- TraceparentOf tests ---
+
+func TestTraceparentOf_ValidSpan(t *testing.T) {
+	tr, err := clog.NewTracer("traceparent-of-valid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	clog.SetGlobalTracer(tr)
+
+	span, _ := clog.StartSpanFromContext(t.Context(), "traceparent-of-span")
+	defer span.Finish()
+
+	tp := clog.TraceparentOf(span)
+	if tp == "" {
+		t.Fatal("TraceparentOf() returned empty string")
+	}
+	// W3C: "00-" + 32 hex + "-" + 16 hex + "-" + 2 hex = 55 chars
+	if len(tp) < 50 {
+		t.Errorf("TraceparentOf() = %q, looks too short (len=%d)", tp, len(tp))
+	}
+	// Must start with "00-"
+	if !strings.HasPrefix(tp, "00-") {
+		t.Errorf("TraceparentOf() = %q, want 00- prefix", tp)
+	}
+	// Must have 4 dash-separated parts
+	if parts := strings.SplitN(tp, "-", 4); len(parts) != 4 {
+		t.Errorf("TraceparentOf() = %q, want 4 dash-separated parts, got %d", tp, len(parts))
+	}
+}
+
+func TestTraceparentOf_NilSpan(t *testing.T) {
+	if got := clog.TraceparentOf(nil); got != "" {
+		t.Errorf("TraceparentOf(nil) = %q, want empty string", got)
+	}
+}
+
+func TestTraceparentOf_NoGlobalTracer(t *testing.T) {
+	// TraceparentOf uses the span's own tracer, not the global one.
+	tr, err := clog.NewTracer("traceparent-of-no-global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	span, _ := clog.StartSpanFromContext(t.Context(), "no-global-span")
+	defer span.Finish()
+
+	// Don't set global tracer — should still work
+	tp := clog.TraceparentOf(span)
+	if tp == "" {
+		t.Fatal("TraceparentOf() returned empty even without global tracer")
+	}
+}
+
 // --- SpanFromContext tests ---
 
 func TestSpanFromContext(t *testing.T) {
