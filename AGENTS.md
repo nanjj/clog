@@ -12,7 +12,7 @@ go test ./... -v -count=1
 | File | Purpose |
 |------|---------|
 | `tracer.go` | Package entry. `init()` sets Jaeger env defaults. `Tracer` struct, `NewTracer`, `NewTracerWithOptions`, `SetGlobalTracer`, `GlobalTracer`, `CloseTracer`. |
-| `span.go` | `StartSpanFromContext` — creates child/root spans from context. |
+| `span.go` | `StartSpanFromContext` — creates child/root spans from context. `SpanFromContext`, `LogKV`, `ExtractFromEnv`, `TraceEnv`, `TraceparentOf`, `InjectToEnv`. |
 | `*_test.go` | Tests in `package clog_test` (external test package). Uses real Jaeger in-memory tracer (no backend needed). |
 
 ## Design Decisions
